@@ -1,0 +1,24 @@
+{
+  "name": "9router-hub",
+  "version": "0.1.0",
+  "description": "9Router federation control plane — schedule, creditUSD, bilateral ledger",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "reset-db": "sh scripts/reset-db.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "jose": "^6.1.3",
+    "uuid": "^13.0.0"
+  }
+}

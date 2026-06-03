@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>9router Hub · 联邦运营台</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <span class="logo">9</span>
+      <div>
+        <h1>9router Hub</h1>
+        <p class="sub">联邦借还 · 实时大盘</p>
+      </div>
+    </div>
+    <div class="header-meta">
+      <label class="token-field" id="tokenWrap" hidden>
+        <span>Admin Token</span>
+        <input type="password" id="adminToken" placeholder="HUB_ADMIN_TOKEN" autocomplete="off" />
+      </label>
+      <span class="pill" id="statusPill">连接中…</span>
+      <span class="muted" id="lastUpdated">—</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button type="button" class="tab active" data-tab="overview">大盘</button>
+    <button type="button" class="tab" data-tab="marketplace">可借模型</button>
+    <button type="button" class="tab" data-tab="users">用户</button>
+  </nav>
+
+  <main id="panelOverview" class="panel active"></main>
+  <main id="panelMarketplace" class="panel"></main>
+  <main id="panelUsers" class="panel"></main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
