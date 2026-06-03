@@ -19,6 +19,9 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { verifyIncomingFederationToken } from "@/lib/federation/federationToken.js";
+import { pickLocalServicableModel } from "@/lib/federation/borrowModelResolve.js";
+import { parseFederationModel } from "@/lib/federation/settings.js";
 
 /**
  * Handle chat completion request
@@ -45,11 +48,19 @@ export async function handleChat(request, clientRawRequest = null) {
   }
   cacheClaudeHeaders(clientRawRequest.headers);
 
-  // Log request endpoint and model
   const url = new URL(request.url);
-  const modelStr = body.model;
+  let modelStr = body.model;
 
-  // Count messages (support both messages[] and input[] formats)
+  if (modelStr && !parseFederationModel(modelStr)) {
+    const localModel = await pickLocalServicableModel(modelStr);
+    if (localModel && localModel !== modelStr) {
+      log.info("ROUTING", `${modelStr} → ${localModel} (逻辑名映射本机绝对模型)`);
+      modelStr = localModel;
+      body = { ...body, model: localModel };
+      if (clientRawRequest?.body) clientRawRequest.body.model = localModel;
+    }
+  }
+
   const msgCount = body.messages?.length || body.input?.length || 0;
   const toolCount = body.tools?.length || 0;
   const effort = body.reasoning_effort || body.reasoning?.effort || null;
@@ -65,9 +76,12 @@ export async function handleChat(request, clientRawRequest = null) {
     log.debug("AUTH", "No API key provided (local mode)");
   }
 
-  // Enforce API key if enabled in settings
+  // Enforce API key if enabled in settings (federation 借入走出借方 JWT，不是本地 API Key)
   const settings = await getSettings();
-  if (settings.requireApiKey) {
+  const fedLendCtx =
+    authHeader?.startsWith("Bearer ") ? await verifyIncomingFederationToken(authHeader) : null;
+  const federationLend = !!fedLendCtx && !fedLendCtx.error;
+  if (settings.requireApiKey && !federationLend) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");

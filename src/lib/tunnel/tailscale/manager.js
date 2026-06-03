@@ -1,4 +1,4 @@
-import { loadState, generateShortId } from "../shared/state.js";
+import { loadState, saveState, generateShortId } from "../shared/state.js";
 import { startFunnel, stopFunnel, isTailscaleRunning, isTailscaleRunningStrict, isTailscaleLoggedIn, startLogin, startDaemonWithPassword, provisionCert } from "./tailscale.js";
 import { waitForHealth } from "./healthCheck.js";
 import { getSettings, updateSettings } from "@/lib/localDb";
@@ -16,11 +16,32 @@ const svc = {
 export function getTailscaleService() { return svc; }
 export function isTailscaleReconnecting() { return svc.spawnInProgress; }
 
+/** 稳定 Tailscale 机器名：优先 state.json，其次已保存的 tailscaleUrl，最后才生成新 shortId */
+function resolveTailscaleHostname(existing, tailscaleUrl) {
+  if (existing?.shortId) return existing.shortId;
+  const url = (tailscaleUrl || "").trim();
+  if (url) {
+    try {
+      const machine = new URL(url).hostname.split(".")[0];
+      if (machine) return machine;
+    } catch {
+      /* ignore */
+    }
+  }
+  const shortId = generateShortId();
+  saveState({ shortId });
+  return shortId;
+}
+
 function throwIfCancelled(token) {
   if (token.cancelled) throw new Error("tailscale cancelled");
 }
 
-export async function enableTailscale(localPort = 20128) {
+import { resolveServicePort } from "@/lib/baseUrl.mjs";
+
+export { resolveServicePort };
+
+export async function enableTailscale(localPort = resolveServicePort()) {
   console.log(`[Tailscale] enable start (port=${localPort})`);
   svc.cancelToken = { cancelled: false };
   svc.activeLocalPort = localPort;
@@ -33,9 +54,9 @@ export async function enableTailscale(localPort = 20128) {
     console.log("[Tailscale] daemon ready");
     throwIfCancelled(token);
 
+    const settings = await getSettings();
     const existing = loadState();
-    const shortId = existing?.shortId || generateShortId();
-    const tsHostname = shortId;
+    const tsHostname = resolveTailscaleHostname(existing, settings.tailscaleUrl);
 
     const loggedIn = isTailscaleLoggedIn();
     console.log(`[Tailscale] loggedIn=${loggedIn}`);
@@ -79,6 +100,7 @@ export async function enableTailscale(localPort = 20128) {
     }
 
     await updateSettings({ tailscaleEnabled: true, tailscaleUrl: result.tunnelUrl });
+    saveState({ shortId: tsHostname, tunnelUrl: result.tunnelUrl });
     console.log(`[Tailscale] funnel up: ${result.tunnelUrl}`);
 
     // Provision TLS cert so Funnel can serve HTTPS (non-fatal if fails)
@@ -95,6 +117,12 @@ export async function enableTailscale(localPort = 20128) {
       console.warn(`[Tailscale] health check timed out, will retry via watchdog`);
     }
     console.log(`[Tailscale] enable success (reachable=${reachableNow})`);
+    try {
+      const { syncFederationEndpointToHub } = await import("@/lib/federation/heartbeat.js");
+      await syncFederationEndpointToHub();
+    } catch (e) {
+      console.warn(`[Tailscale] federation hub sync warn: ${e.message}`);
+    }
     return { success: true, tunnelUrl: result.tunnelUrl };
   } catch (e) {
     console.error(`[Tailscale] enable error: ${e.message}`);
@@ -109,6 +137,12 @@ export async function disableTailscale() {
   svc.cancelToken.cancelled = true;
   stopFunnel();
   await updateSettings({ tailscaleEnabled: false, tailscaleUrl: "" });
+  try {
+    const { syncFederationEndpointToHub } = await import("@/lib/federation/heartbeat.js");
+    await syncFederationEndpointToHub();
+  } catch {
+    /* ignore */
+  }
   return { success: true };
 }
 

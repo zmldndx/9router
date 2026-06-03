@@ -25,10 +25,18 @@ const WINDOWS_TAILSCALE_BIN = "C:\\Program Files\\Tailscale\\tailscale.exe";
 
 // Common Unix install paths to probe synchronously (system tailscale)
 const UNIX_TAILSCALE_CANDIDATES = [
-  "/usr/local/bin/tailscale",
   "/opt/homebrew/bin/tailscale",
+  "/usr/local/bin/tailscale",
   "/usr/bin/tailscale",
 ];
+
+const UNIX_TAILSCALED_CANDIDATES = [
+  "/opt/homebrew/bin/tailscaled",
+  "/usr/local/bin/tailscaled",
+  "/usr/bin/tailscaled",
+];
+
+const TAILSCALED_BIN = path.join(BIN_DIR, IS_WINDOWS ? "tailscaled.exe" : "tailscaled");
 
 // ─── Cache + background refresh (avoid blocking event loop on dead daemon) ──
 const PROBE_TTL_MS = 10000;
@@ -74,6 +82,24 @@ function getTailscaleBin() {
     } else binCache.value = null;
   }
   return binCache.value;
+}
+
+/** Resolve tailscaled daemon binary (separate from tailscale CLI) */
+export function getTailscaledBin() {
+  if (IS_WINDOWS) return null;
+  const found = UNIX_TAILSCALED_CANDIDATES.find((p) => fs.existsSync(p));
+  if (found) return found;
+  if (fs.existsSync(TAILSCALED_BIN)) return TAILSCALED_BIN;
+  try {
+    const out = execSync("which tailscaled 2>/dev/null", {
+      encoding: "utf8",
+      env: { ...process.env, PATH: EXTENDED_PATH },
+      timeout: PROBE_TIMEOUT_MS,
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
 }
 
 export function isTailscaleInstalled() {
@@ -514,7 +540,12 @@ export async function startDaemonWithPassword(sudoPassword) {
   // Reclaim folder ownership (previous root daemon may have locked it)
   await ensureUserOwnedDir(TAILSCALE_DIR);
 
-  const tailscaledBin = IS_MAC ? "/usr/local/bin/tailscaled" : "tailscaled";
+  const tailscaledBin = getTailscaledBin();
+  if (!tailscaledBin) {
+    throw new Error(
+      "tailscaled not found. Install Tailscale (e.g. brew install tailscale) or use the in-app installer."
+    );
+  }
   const daemonArgs = [
     `--socket=${TAILSCALE_SOCKET}`,
     `--statedir=${TAILSCALE_DIR}`,
@@ -542,13 +573,30 @@ export async function startDaemonWithPassword(sudoPassword) {
     child.unref();
   }
 
-  // Wait for socket ready
-  await new Promise((r) => setTimeout(r, 3000));
+  const cli = getTailscaleBin() || tailscaledBin;
+  for (let i = 0; i < 24; i++) {
+    if (fs.existsSync(TAILSCALE_SOCKET)) {
+      try {
+        execSync(`"${cli}" ${SOCKET_FLAG.join(" ")} status --json`, {
+          stdio: "ignore",
+          windowsHide: true,
+          env: { ...process.env, PATH: EXTENDED_PATH },
+          timeout: 2000,
+        });
+        console.log(`[Tailscale] daemon ready after ${i * 500}ms (${tailscaledBin})`);
+        return;
+      } catch {
+        /* socket file exists but backend not ready */
+      }
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  console.warn("[Tailscale] daemon socket not ready after 12s");
 }
 
-/** Best-effort: ensure daemon running (used for login flow) */
-function ensureDaemon() {
-  startDaemonWithPassword("").catch(() => {});
+/** Ensure daemon running before login (used when enableTailscale did not run first) */
+async function ensureDaemon() {
+  await startDaemonWithPassword("");
 }
 
 /** Read AuthURL from `tailscale status --json` (Win exposes it there, not stdout). */
@@ -575,96 +623,111 @@ export function startLogin(hostname) {
   if (!bin) return Promise.reject(new Error("Tailscale not installed"));
 
   return new Promise((resolve, reject) => {
-    // Ensure daemon is running (best-effort, no sudo)
-    ensureDaemon();
+    let daemonReady = false;
 
-    // Check if already logged in
-    if (isTailscaleLoggedIn()) {
-      resolve({ alreadyLoggedIn: true });
-      return;
-    }
-
-    const args = tsArgs("up", "--accept-routes");
-    if (hostname) args.push(`--hostname=${hostname}`);
-    const child = spawn(bin, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
-      windowsHide: true
-    });
-
-    let resolved = false;
-    let output = "";
-
-    const parseAuthUrl = (text) => {
-      const match = text.match(/https:\/\/login\.tailscale\.com\/a\/[a-zA-Z0-9]+/);
-      return match ? match[0] : null;
-    };
-
-    const finishWithUrl = (url, source) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
-      clearInterval(statusPoll);
-      console.log(`[Tailscale] login authUrl detected (${source})`);
-      child.unref();
-      resolve({ authUrl: url });
-    };
-
-    // Poll status --json every 500ms — Windows exposes AuthURL only there
-    const statusPoll = setInterval(() => {
-      if (resolved) return;
-      const url = getAuthUrlFromStatus();
-      if (url) finishWithUrl(url, "status");
-    }, 500);
-
-    const timeout = setTimeout(() => {
-      if (resolved) return;
-      resolved = true;
-      clearInterval(statusPoll);
-      child.unref();
-      const url = parseAuthUrl(output) || getAuthUrlFromStatus();
-      if (url) resolve({ authUrl: url });
-      else reject(new Error("tailscale up timed out without auth URL"));
-    }, 15000);
-
-    const handleData = (data) => {
-      output += data.toString();
-      const url = parseAuthUrl(output);
-      if (url) finishWithUrl(url, "stdout");
-    };
-
-    child.stdout.on("data", handleData);
-    child.stderr.on("data", handleData);
-
-    child.on("error", (err) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
-      clearInterval(statusPoll);
-      console.error(`[Tailscale] login spawn error: ${err.message}`);
-      reject(err);
-    });
-
-    child.on("exit", (code) => {
-      if (resolved) return;
-      console.log(`[Tailscale] login exit code=${code}`);
-      // Don't trust exit code alone — Win `tailscale up` exits 0 even when not logged in.
-      // Let status poll continue until AuthURL appears or timeout.
-      const url = parseAuthUrl(output) || getAuthUrlFromStatus();
-      if (url) {
-        finishWithUrl(url, "exit");
-        return;
-      }
-      // Only resolve alreadyLoggedIn if status confirms BackendState=Running
+    const runLogin = () => {
       if (isTailscaleLoggedIn()) {
-        resolved = true;
-        clearTimeout(timeout);
-        clearInterval(statusPoll);
         resolve({ alreadyLoggedIn: true });
         return;
       }
-      // Otherwise keep polling — daemon may publish AuthURL shortly after exit
-    });
+
+      const args = tsArgs("up", "--accept-routes");
+      if (hostname) args.push(`--hostname=${hostname}`);
+      const child = spawn(bin, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+        windowsHide: true,
+      });
+
+      let resolved = false;
+      let output = "";
+
+      const parseAuthUrl = (text) => {
+        const match = text.match(/https:\/\/login\.tailscale\.com\/a\/[a-zA-Z0-9]+/);
+        return match ? match[0] : null;
+      };
+
+      const finishWithUrl = (url, source) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeout);
+        clearInterval(statusPoll);
+        console.log(`[Tailscale] login authUrl detected (${source})`);
+        child.unref();
+        resolve({ authUrl: url });
+      };
+
+      const statusPoll = setInterval(() => {
+        if (resolved) return;
+        const url = getAuthUrlFromStatus();
+        if (url) finishWithUrl(url, "status");
+      }, 500);
+
+      const timeout = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        clearInterval(statusPoll);
+        child.unref();
+        const url = parseAuthUrl(output) || getAuthUrlFromStatus();
+        if (url) {
+          resolve({ authUrl: url });
+          return;
+        }
+        const hint = daemonReady
+          ? "Daemon may still be starting, or Tailscale menu-bar app is using a different instance. Quit the Tailscale app and retry, or wait and click Connect again."
+          : "tailscaled did not start. On Apple Silicon Macs ensure Homebrew tailscale is installed (brew install tailscale).";
+        reject(new Error(`tailscale up timed out without auth URL. ${hint}`));
+      }, 30000);
+
+      const handleData = (data) => {
+        output += data.toString();
+        const url = parseAuthUrl(output);
+        if (url) finishWithUrl(url, "stdout");
+      };
+
+      child.stdout.on("data", handleData);
+      child.stderr.on("data", handleData);
+
+      child.on("error", (err) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeout);
+        clearInterval(statusPoll);
+        console.error(`[Tailscale] login spawn error: ${err.message}`);
+        reject(err);
+      });
+
+      child.on("exit", (code) => {
+        if (resolved) return;
+        console.log(`[Tailscale] login exit code=${code}`);
+        const url = parseAuthUrl(output) || getAuthUrlFromStatus();
+        if (url) {
+          finishWithUrl(url, "exit");
+          return;
+        }
+        if (isTailscaleLoggedIn()) {
+          resolved = true;
+          clearTimeout(timeout);
+          clearInterval(statusPoll);
+          resolve({ alreadyLoggedIn: true });
+        }
+      });
+    };
+
+    ensureDaemon()
+      .then(() => {
+        daemonReady = true;
+        runLogin();
+      })
+      .catch((err) => {
+        reject(
+          err?.message?.includes("tailscaled not found")
+            ? err
+            : new Error(
+                `Tailscale daemon failed to start: ${err?.message || err}. On macOS try: brew install tailscale`
+              )
+        );
+      });
   });
 }
 

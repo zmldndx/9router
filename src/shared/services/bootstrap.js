@@ -1,4 +1,7 @@
+import { load9routerEnv } from "@/lib/loadEnv.mjs";
 import initializeApp from "./initializeApp.js";
+
+load9routerEnv();
 
 // Skip during Next.js build/prerender — bootstrap would download cloudflared, init DNS, etc.
 const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build"

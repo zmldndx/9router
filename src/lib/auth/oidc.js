@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { getSettings } from "@/lib/localDb";
+import { isBaseUrlConfigured, resolveBaseUrl } from "@/lib/baseUrl.mjs";
 
 export const OIDC_COOKIE_NAMES = {
   state: "oidc_state",
@@ -20,13 +21,8 @@ function normalizeScopes(value) {
 }
 
 export function getPublicOrigin(request) {
-  const configuredBaseUrl =
-    process.env.BASE_URL ||
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    "";
-
-  if (configuredBaseUrl) {
-    return trimTrailingSlashes(configuredBaseUrl);
+  if (isBaseUrlConfigured()) {
+    return trimTrailingSlashes(resolveBaseUrl());
   }
 
   const forwardedProto = request?.headers?.get?.("x-forwarded-proto") || "";
@@ -37,7 +33,7 @@ export function getPublicOrigin(request) {
     return `${protocol}://${host}`.replace(/\/+$/, "");
   }
 
-  return trimTrailingSlashes(new URL(request.url).origin);
+  return trimTrailingSlashes(new URL(request.url).origin || resolveBaseUrl());
 }
 
 export function isOidcConfigured(settings) {

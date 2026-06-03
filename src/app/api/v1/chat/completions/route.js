@@ -1,4 +1,5 @@
 import { handleChat } from "@/sse/handlers/chat.js";
+import { maybeHandleFederationChat } from "@/lib/federation/chatBridge.js";
 import { initTranslators } from "open-sse/translator/index.js";
 
 let initialized = false;
@@ -26,10 +27,12 @@ export async function OPTIONS() {
   });
 }
 
-export async function POST(request) {  
-  // Fallback to local handling
+export async function POST(request) {
   await ensureInitialized();
-  
+
+  const federationResponse = await maybeHandleFederationChat(request);
+  if (federationResponse) return federationResponse;
+
   return await handleChat(request);
 }
 

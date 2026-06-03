@@ -112,6 +112,12 @@ Options:
   }
 }
 
+if (args[0] === "federate") {
+  const { run } = require("./src/cli/federation");
+  run(args.slice(1), { port }).then(() => process.exit(0));
+  return;
+}
+
 // Auto-relaunch after update: detached process has no TTY → fallback to tray
 if (skipUpdate && !trayMode && !process.stdin.isTTY) {
   trayMode = true;

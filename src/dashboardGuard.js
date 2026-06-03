@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSettings, validateApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { verifyIncomingFederationToken } from "@/lib/federation/federationToken.js";
 
 const CLI_TOKEN_HEADER = "x-9r-cli-token";
 const CLI_TOKEN_SALT = "9r-cli-auth";
@@ -115,9 +116,17 @@ async function hasValidApiKey(request) {
   return await validateApiKey(apiKey);
 }
 
+/** 借入方经 Tailscale 打到出借方时带 federation JWT，应放行 /v1/* */
+async function hasValidFederationLendToken(request) {
+  const auth = request.headers.get("authorization") || "";
+  const ctx = await verifyIncomingFederationToken(auth);
+  return !!ctx && !ctx.error;
+}
+
 async function canAccessPublicLlmApi(request) {
   if (isLocalRequest(request)) return true;
   if (await hasValidCliToken(request)) return true;
+  if (await hasValidFederationLendToken(request)) return true;
   return await hasValidApiKey(request);
 }
 
@@ -182,6 +191,15 @@ export async function proxy(request) {
   if (isPublicLlmApi(pathname)) {
     if (await canAccessPublicLlmApi(request)) return NextResponse.next();
     return NextResponse.json({ error: "API key required for remote API access" }, { status: 401 });
+  }
+
+  // Federation API: localhost/CLI, or logged-in dashboard (e.g. via Tailscale 访问控制台)
+  if (pathname.startsWith("/api/federation/")) {
+    if (isLocalRequest(request)) return NextResponse.next();
+    if (await hasValidCliToken(request) || await isAuthenticated(request)) {
+      return NextResponse.next();
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.

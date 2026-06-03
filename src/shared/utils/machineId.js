@@ -46,11 +46,29 @@ function loadCliSecret() {
   return cachedCliSecret;
 }
 
+/**
+ * 设备 ID：联邦 Hub deviceId、API keys 等。
+ * - 未设 MACHINE_ID_SALT：仅由本机硬件 ID 稳定推导（单实例）
+ * - 设 MACHINE_ID_SALT：同机多实例须用不同盐，避免 Hub 上 deviceId 冲突
+ * - salt === CLI_AUTH_SALT：CLI 本地令牌专用，与联邦 deviceId 分离
+ */
 export async function getConsistentMachineId(salt = null) {
-  const saltValue = salt || process.env.MACHINE_ID_SALT || 'endpoint-proxy-salt';
   const raw = loadRawMachineId();
-  const extra = saltValue === CLI_AUTH_SALT ? loadCliSecret() : '';
-  return crypto.createHash('sha256').update(raw + saltValue + extra).digest('hex').substring(0, 16);
+
+  if (salt === CLI_AUTH_SALT) {
+    return crypto
+      .createHash("sha256")
+      .update(raw + CLI_AUTH_SALT + loadCliSecret())
+      .digest("hex")
+      .substring(0, 16);
+  }
+
+  const custom = (salt ?? process.env.MACHINE_ID_SALT ?? "").trim();
+  if (custom) {
+    return crypto.createHash("sha256").update(raw + custom).digest("hex").substring(0, 16);
+  }
+
+  return crypto.createHash("sha256").update(raw).digest("hex").substring(0, 16);
 }
 
 export async function getRawMachineId() {

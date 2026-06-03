@@ -7,6 +7,8 @@ import { isOidcConfigured } from "@/lib/auth/oidc";
 import { checkLock, recordFail, recordSuccess, getClientIp } from "@/lib/auth/loginLimiter";
 
 const RESET_HINT = "Forgot password? Reset to default via 9Router CLI → Settings → Reset Password to Default.";
+/** 尚未在设置中保存密码哈希时的默认控制台密码（可在 Dashboard 设置中修改） */
+const DEFAULT_DASHBOARD_PASSWORD = "123456";
 
 function isTunnelRequest(request, settings) {
   const host = (request.headers.get("host") || "").split(":")[0].toLowerCase();
@@ -46,8 +48,7 @@ export async function POST(request) {
       isValid = await bcrypt.compare(password, storedHash);
     } else {
       // Use env var or default
-      const initialPassword = process.env.INITIAL_PASSWORD || "123456";
-      isValid = password === initialPassword;
+      isValid = password === DEFAULT_DASHBOARD_PASSWORD;
     }
 
     if (isValid) {

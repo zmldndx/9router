@@ -1,7 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { loadEnvFromRoot } from "./src/lib/loadEnv.mjs";
+import { resolveBaseUrl } from "./src/lib/baseUrl.mjs";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
+loadEnvFromRoot(projectRoot);
+const publicBaseUrl = resolveBaseUrl();
 // CLI bundling needs workspace root so tracing includes hoisted node_modules (slim ~50MB).
 // Docker / default uses projectRoot so server.js lands at /app/server.js (not nested).
 const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
@@ -23,7 +27,9 @@ const nextConfig = {
   images: {
     unoptimized: true
   },
-  env: {},
+  env: {
+    NEXT_PUBLIC_BASE_URL: publicBaseUrl,
+  },
   webpack: (config, { isServer }) => {
     // Ignore fs/path modules in browser bundle
     if (!isServer) {

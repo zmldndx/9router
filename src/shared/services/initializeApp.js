@@ -51,6 +51,11 @@ export async function initializeApp() {
     await cleanupProviderConnections();
     const settings = await getSettings();
 
+    const { print9routerStartupBanner } = await import("@/lib/startupBanner.js");
+    print9routerStartupBanner().catch((e) =>
+      console.warn("[Startup] diagnostics banner failed:", e.message)
+    );
+
     // Auto-resume tunnel (once per process)
     if (settings.tunnelEnabled && !g.tunnelAutoResumed) {
       g.tunnelAutoResumed = true;
@@ -90,8 +95,31 @@ export async function initializeApp() {
     startWatchdog();
     startNetworkMonitor();
     autoStartMitm();
+    startFederationIfEnabled().catch(() => {});
   } catch (error) {
     console.error("[InitApp] Error:", error);
+  }
+}
+
+async function startFederationIfEnabled() {
+  const { getFederationSettings } = await import("@/lib/federation/settings.js");
+  const { startFederationHeartbeat } = await import("@/lib/federation/heartbeat.js");
+  const fed = await getFederationSettings();
+  if (fed.federationEnabled && fed.hubUrl && fed.hubAccessToken) {
+    const { startFederationHeartbeat, syncFederationEndpointToHub } = await import(
+      "@/lib/federation/heartbeat.js"
+    );
+    const { syncHubPoliciesFromLocal } = await import("@/lib/federation/reconnect.js");
+    startFederationHeartbeat();
+    syncFederationEndpointToHub()
+      .then(() => syncHubPoliciesFromLocal(fed))
+      .catch((e) => {
+        console.warn(`[Federation] startup hub sync failed: ${e.message}`);
+      });
+    const { scheduleLendProbeWithRetry } = await import("@/lib/federation/lendProbe.js");
+    if (fed.federationLendEnabled && fed.federationExposeModels?.length) {
+      scheduleLendProbeWithRetry("startup");
+    }
   }
 }
 

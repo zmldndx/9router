@@ -98,6 +98,12 @@ export async function enableTunnel(localPort = 20128) {
     }
 
     console.log("[Tunnel] enable success");
+    try {
+      const { syncFederationEndpointToHub } = await import("@/lib/federation/heartbeat.js");
+      await syncFederationEndpointToHub();
+    } catch (e) {
+      console.warn(`[Tunnel] federation hub sync warn: ${e.message}`);
+    }
     return { success: true, tunnelUrl, shortId, publicUrl };
   } catch (e) {
     // Suppress noise when spawn was deliberately killed (restart/disable superseded it)
