@@ -4,7 +4,7 @@ import {
   getFederationSettings,
   getLocalDeviceId,
 } from "@/lib/federation/settings";
-import { flushLedgerQueue } from "@/lib/federation/ledgerReporter";
+import { flushLedgerQueue, getLedgerAuditLogPaths } from "@/lib/federation/ledgerReporter";
 
 function basePayload(settings, deviceId) {
   return {
@@ -52,6 +52,7 @@ export async function GET() {
       lendableModels: summary.lendableModels,
       totals: summary.totals,
       topModels: summary.topModels,
+      ledgerAuditLogs: getLedgerAuditLogPaths(),
     });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: e.status || 500 });

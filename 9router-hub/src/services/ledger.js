@@ -6,6 +6,19 @@ import {
 import { newId, nowIso } from "../utils/ids.js";
 import { computeChargeUSD } from "./pricing.js";
 import { getDevice } from "./devices.js";
+import { appendHubLedgerCallbackAudit } from "./ledgerAuditLog.js";
+
+const PROBE_BORROWER_ID = "probe:hub";
+
+function isProbeLedgerReport(r) {
+  const borrower = String(r.borrowerDeviceId || "");
+  if (borrower === PROBE_BORROWER_ID || borrower.startsWith("probe:")) return true;
+  if (String(r.requestId || "").startsWith("probe_")) return true;
+  if (r.source && r.source !== "live") {
+    if (r.source === "recovery_probe" || String(r.source).endsWith("_probe")) return true;
+  }
+  return false;
+}
 
 function tokensMatch(a, b) {
   return (
@@ -52,8 +65,12 @@ export function submitLedgerReport(reporterDeviceId, body) {
     throw err;
   }
 
-  if (r.source === "recovery_probe") {
-    return { requestId: r.requestId, settlementStatus: "skipped", reason: "recovery_probe" };
+  if (isProbeLedgerReport(r)) {
+    return {
+      requestId: r.requestId,
+      settlementStatus: "skipped",
+      reason: r.source === "recovery_probe" ? "recovery_probe" : "probe",
+    };
   }
 
   const db = getDb();
@@ -62,7 +79,9 @@ export function submitLedgerReport(reporterDeviceId, body) {
     .get(r.requestId);
 
   if (existingLedger?.settlement_status === "confirmed") {
-    return { requestId: r.requestId, settlementStatus: "confirmed", idempotent: true };
+    const result = { requestId: r.requestId, settlementStatus: "confirmed", idempotent: true };
+    appendHubLedgerCallbackAudit(r.reporterRole, r, reporterDeviceId, result);
+    return result;
   }
 
   db.prepare(
@@ -99,7 +118,9 @@ export function submitLedgerReport(reporterDeviceId, body) {
     r.source
   );
 
-  return trySettle(r.requestId);
+  const result = trySettle(r.requestId);
+  appendHubLedgerCallbackAudit(r.reporterRole, r, reporterDeviceId, result);
+  return result;
 }
 
 function trySettle(requestId) {

@@ -11,6 +11,8 @@ import {
   HUB_ADMIN_TOKEN,
   OFFICIAL_DEVICE_IDS,
 } from "./config.js";
+import { getHubLedgerAuditLogPaths } from "./services/ledgerAuditLog.js";
+import { getProbeHeartbeatLogPaths } from "./services/probeHeartbeatLog.js";
 
 const hubRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const hubEnvPath = join(hubRoot, ".env");
@@ -54,6 +56,14 @@ export function printHubStartupBanner() {
     `  HUB_ADMIN_TOKEN         ${HUB_ADMIN_TOKEN ? maskSecret(HUB_ADMIN_TOKEN) : "(unset, localhost admin only)"}`,
     "",
     `  OFFICIAL_DEVICE_IDS     ${OFFICIAL_DEVICE_IDS.join(", ") || "(none)"}`,
+    "",
+    "  Federation ledger audit (Hub callbacks, daily JSONL):",
+    `  log dir                 ${getHubLedgerAuditLogPaths().dir} (day=${getHubLedgerAuditLogPaths().day})`,
+    `  borrow-callback         ${getHubLedgerAuditLogPaths().borrow}`,
+    `  lend-callback           ${getHubLedgerAuditLogPaths().lend}`,
+    "",
+    "  Lend probe log (daily, not federation ledger):",
+    `  probe heartbeat         ${getProbeHeartbeatLogPaths().file}`,
     "",
     `  Dashboard               http://127.0.0.1:${PORT}/`,
     `  Health                  http://127.0.0.1:${PORT}/health`,

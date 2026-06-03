@@ -7,6 +7,8 @@ import { PORT, UI_REFRESH_MS, DB_PATH } from "./config.js";
 import { printHubStartupBanner } from "./startupBanner.js";
 import { getDb } from "./db/index.js";
 import { expireStalePending } from "./services/ledger.js";
+import { getHubLedgerAuditLogPaths } from "./services/ledgerAuditLog.js";
+import { getProbeHeartbeatLogPaths } from "./services/probeHeartbeatLog.js";
 import { authRouter } from "./routes/auth.js";
 import { devicesRouter } from "./routes/devices.js";
 import { devicesPublicRouter } from "./routes/devicesPublic.js";
@@ -27,7 +29,13 @@ app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "9router-hub" });
+  res.json({
+    ok: true,
+    service: "9router-hub",
+    dbPath: DB_PATH,
+    ledgerAuditLogs: getHubLedgerAuditLogPaths(),
+    probeHeartbeatLog: getProbeHeartbeatLogPaths(),
+  });
 });
 
 app.use(express.static(publicDir));

@@ -1,7 +1,11 @@
 import { hubFetch } from "./hubClient.js";
+import { appendLedgerAudit } from "./ledgerAuditLog.js";
+import { isFederationProbeRequest } from "./probeRequest.js";
 import { getFederationSettings, getLocalDeviceId } from "./settings.js";
 import { getAdapter } from "@/lib/db/driver.js";
 import { stringifyJson, parseJson } from "@/lib/db/helpers/jsonCol.js";
+
+export { getLedgerAuditLogPaths } from "./ledgerAuditLog.js";
 
 const KV_SCOPE = "federation";
 const QUEUE_KEY = "ledger_queue";
@@ -54,15 +58,26 @@ export function buildLedgerPayload({
 }
 
 export async function reportLedger(payload, settings) {
+  if (isFederationProbeRequest(payload)) {
+    return { ok: true, skipped: true, reason: "probe" };
+  }
+  const side = payload.reporterRole === "lender" ? "lender" : "borrower";
+  appendLedgerAudit(side, "submit", payload, { hubUrl: settings?.hubUrl || "" });
+
   try {
     const result = await hubFetch("/v1/ledger/report", {
       method: "POST",
       settings,
       body: payload,
     });
+    appendLedgerAudit(side, "hub_ok", payload, {
+      settlementStatus: result?.settlementStatus,
+      idempotent: !!result?.idempotent,
+    });
     return { ok: true, result };
   } catch (e) {
     await enqueueLedger(payload);
+    appendLedgerAudit(side, "queued", payload, { error: e.message, status: e.status });
     return { ok: false, error: e.message };
   }
 }
@@ -92,10 +107,13 @@ export async function flushLedgerQueue(settings) {
   const remaining = [];
   let flushed = 0;
   for (const item of queue) {
+    const side = item.reporterRole === "lender" ? "lender" : "borrower";
     try {
-      await hubFetch("/v1/ledger/report", { method: "POST", settings, body: item });
+      const result = await hubFetch("/v1/ledger/report", { method: "POST", settings, body: item });
+      appendLedgerAudit(side, "flush_ok", item, { settlementStatus: result?.settlementStatus });
       flushed += 1;
-    } catch {
+    } catch (e) {
+      appendLedgerAudit(side, "flush_fail", item, { error: e.message, status: e.status });
       remaining.push(item);
     }
   }

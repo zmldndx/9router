@@ -2,6 +2,7 @@ import { getModelInfo, getComboModels } from "@/sse/services/model.js";
 import { getProviderCredentials } from "@/sse/services/auth.js";
 import { lookupFederationModelIdentity } from "./lendCatalog.js";
 import { hubFetch } from "./hubClient.js";
+import { fedDiag } from "./federationLog.js";
 import {
   getFederationSettings,
   getLocalDeviceId,
@@ -29,23 +30,68 @@ export async function pickLocalServicableModel(modelStr) {
 export async function resolveBorrowLogicalModel(modelStr, settings = null) {
   const s = settings || (await getFederationSettings());
   const forced = parseFederationModel(modelStr);
-  if (forced) return forced;
+  if (forced) {
+    fedDiag("resolve", `forced borrow logicalModel=${forced}`, { inputModel: modelStr });
+    return forced;
+  }
 
-  if (!s.federationEnabled || !s.hubUrl || !s.hubAccessToken || !s.federationBorrowEnabled) {
+  if (!s.federationEnabled || !s.hubUrl || !s.hubAccessToken) {
+    fedDiag("resolve", "skip borrow → local chat", {
+      reason: "hub_not_configured",
+      federationEnabled: s.federationEnabled,
+      hasHubUrl: !!s.hubUrl,
+      hasToken: !!s.hubAccessToken,
+      inputModel: modelStr,
+    });
+    return null;
+  }
+  if (!s.federationBorrowEnabled) {
+    fedDiag("resolve", "skip borrow → local chat", {
+      reason: "borrow_disabled",
+      inputModel: modelStr,
+    });
     return null;
   }
 
   const trimmed = (modelStr || "").trim();
-  if (!trimmed) return null;
+  if (!trimmed) {
+    fedDiag("resolve", "skip borrow → local chat", { reason: "empty_model" });
+    return null;
+  }
 
-  if (await pickLocalServicableModel(trimmed)) return null;
+  const localModel = await pickLocalServicableModel(trimmed);
+  if (localModel) {
+    fedDiag("resolve", "skip borrow → local chat", {
+      reason: "served_locally",
+      localModel,
+      inputModel: modelStr,
+    });
+    return null;
+  }
 
   const identity = await lookupFederationModelIdentity(trimmed);
   const borrowLogical =
     identity?.logicalModel ||
     (trimmed.includes("/") ? trimmed.slice(trimmed.indexOf("/") + 1) : trimmed);
-  if (!borrowLogical) return null;
-  if (await hasRemoteLendersFor(borrowLogical, s)) return borrowLogical;
+  if (!borrowLogical) {
+    fedDiag("resolve", "skip borrow → local chat", {
+      reason: "no_logical_model",
+      inputModel: modelStr,
+    });
+    return null;
+  }
+
+  const remote = await hasRemoteLendersFor(borrowLogical, s);
+  if (remote) {
+    fedDiag("resolve", `auto borrow logicalModel=${borrowLogical}`, { inputModel: modelStr });
+    return borrowLogical;
+  }
+
+  fedDiag("resolve", "skip borrow → local chat", {
+    reason: "no_remote_lender",
+    borrowLogical,
+    inputModel: modelStr,
+  });
   return null;
 }
 
@@ -91,8 +137,22 @@ async function hasRemoteLendersFor(logicalModel, settings) {
       { settings }
     );
     const routes = data.routes || [];
-    return routes.some((r) => r.deviceId !== deviceId && r.endpointUrl);
-  } catch {
+    const remote = routes.filter((r) => r.deviceId !== deviceId && r.endpointUrl);
+    fedDiag("routes", `Hub fallback-routes logicalModel=${logicalModel}`, {
+      selfDeviceId: deviceId?.slice(0, 8),
+      routeCount: routes.length,
+      remoteCount: remote.length,
+      lenders: remote.map((r) => ({
+        deviceId: r.deviceId?.slice(0, 8),
+        host: r.endpointUrl,
+      })),
+    });
+    return remote.length > 0;
+  } catch (e) {
+    fedDiag("routes", `Hub fallback-routes failed logicalModel=${logicalModel}`, {
+      status: e.status,
+      error: e.message,
+    });
     return false;
   }
 }

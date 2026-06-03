@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { DATA_DIR } from "@/lib/dataDir.js";
+import { getLedgerAuditLogPaths } from "@/lib/federation/ledgerAuditLog.js";
 import { getSettings, getApiKeys } from "@/lib/localDb";
 import { getFederationSettings, getLocalDeviceId, resolvePublicEndpointUrl } from "@/lib/federation/settings.js";
 import { getRawMachineId } from "@/shared/utils/machineId.js";
@@ -111,6 +112,9 @@ export async function print9routerStartupBanner() {
     `  lendEnabled             ${fed.federationLendEnabled}`,
     `  exposeModels            ${(fed.federationExposeModels || []).join(", ") || "(none)"}`,
     `  publicEndpoint (saved)  ${endpointUrl || "(none)"}`,
+    `  ledgerAudit dir         ${getLedgerAuditLogPaths().dir} (day=${getLedgerAuditLogPaths().day})`,
+    `  ledgerAudit (borrow)    ${getLedgerAuditLogPaths().borrow}`,
+    `  ledgerAudit (lend)      ${getLedgerAuditLogPaths().lend}`,
     "",
     "  Tailscale:",
     `  tailscaleEnabled        ${!!settings.tailscaleEnabled}`,

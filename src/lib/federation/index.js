@@ -25,4 +25,8 @@ export {
   syncFederationEndpointToHub,
   startFederationHeartbeat,
 } from "./heartbeat.js";
-export { flushLedgerQueue, reportLedger } from "./ledgerReporter.js";
+export {
+  flushLedgerQueue,
+  reportLedger,
+  getLedgerAuditLogPaths,
+} from "./ledgerReporter.js";

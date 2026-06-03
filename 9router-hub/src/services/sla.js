@@ -1,5 +1,6 @@
 import { getDb } from "../db/index.js";
 import { newId, nowIso } from "../utils/ids.js";
+import { appendProbeHeartbeatLog } from "./probeHeartbeatLog.js";
 
 const FAIL_THRESHOLD = 0.35;
 const MIN_SAMPLES = 10;
@@ -41,6 +42,15 @@ export function recordSlaSample({ deviceId, logicalModel, requestId, ttftMs, tps
   );
 
   if (isProbeSource(src)) {
+    appendProbeHeartbeatLog({
+      deviceId,
+      logicalModel,
+      requestId,
+      source: src,
+      ok: !!ok,
+      ttftMs,
+      tps,
+    });
     return { recorded: true, lendAllowed: true, probe: true };
   }
 

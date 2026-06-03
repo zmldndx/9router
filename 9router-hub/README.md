@@ -63,6 +63,36 @@ HUB_ADMIN_TOKEN=secret npm start
 
 鉴权：`Authorization: Bearer <hubAccessToken>`；账本上报额外建议 `X-Device-Id: <16位hex>`。
 
+### Hub 对账日志（按日 JSONL）
+
+固定目录 `$HUB_DATA_DIR/log/federation/`，**按 UTC 日期**切分文件；每次 `POST /v1/ledger/report` 追加一行：
+
+| 文件模式 | 内容 |
+|----------|------|
+| `borrow-callback-YYYY-MM-DD.jsonl` | 借入方（`reporterRole=borrower`）回调 |
+| `lend-callback-YYYY-MM-DD.jsonl` | 借出方（`reporterRole=lender`）回调 |
+
+每行含上报 payload + 当次 `settlementStatus`。启动 banner / `GET /health` 会打印当日路径。
+
+**不写入对账日志**：借出探活（`borrowerDeviceId=probe:hub`、`requestId` 以 `probe_` 开头、`source=*_probe`）仅走 SLA 指标，不进 JSONL 与 `federation_ledger`。
+
+**探活专用日志**：`$HUB_DATA_DIR/log/heartbeat/heartbeat-YYYY-MM-DD.log`（JSONL，含 `email`、`userId`、`deviceId`、`logicalModel`、`source`、`ok`、`ttftMs`、探活时间 `at`）。
+
+### 边缘何时探活「某用户的某模型」
+
+探活在**边缘实例**执行（非 Hub 主动拨号）：对该设备 `federationExposeModels` 里每个逻辑模型，向 Hub 申请 `lend-probe` token，再 **POST 本机公网 endpoint** 做一次短流式请求，结果上报 `POST /v1/metrics/federation`（`source` 见下）。
+
+| 时机 | `source` | 触发位置 |
+|------|----------|----------|
+| 应用启动 | `startup_probe` | `initializeApp`：联邦已开 + 允许借出 + 有暴露模型，约 5s 后；无 endpoint 时每 30s 重试最多约 12 分钟 |
+| 连接 Hub | `join_probe` | `hubJoin` / 联邦页注册成功后 |
+| 恢复 / 重试 | `recovery_probe` | 重连同步策略后；联邦页改借出/暴露模型；心跳发现 endpoint 刚就绪；或有模型上次探活失败 |
+| 周期 | `periodic_probe` | 每次联邦心跳（默认 60s）且距上次周期探活 ≥ 30 分钟 |
+
+前提：该实例 `federationLendEnabled`、有 `endpointUrl`（Tailscale/Funnel）、Hub 上该 device `lend_enabled` 且模型在 `expose_models` 中。
+
+边缘侧固定 `$DATA_DIR/log/federation/`：`borrow-ledger-YYYY-MM-DD.jsonl`、`lend-ledger-YYYY-MM-DD.jsonl`。对账用同一 `requestId` 串联边缘与 Hub 四处日志。
+
 ## 与 9Router 边缘
 
 边缘通过 `src/lib/federation/*` 对接；模型前缀 `federation:<logicalModel>` 走借入直连。Hub 与边缘需共用 `FEDERATION_JWT_SECRET`（边缘验 lend 侧 token）。

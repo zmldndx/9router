@@ -5,6 +5,14 @@ import { resolveBorrowLogicalModel } from "./borrowModelResolve.js";
 import { verifyIncomingFederationToken } from "./federationToken.js";
 import { executeFederationBorrow } from "./borrow.js";
 import { reportLenderLedger } from "./ledgerReporter.js";
+import { fedDiag } from "./federationLog.js";
+import { getLocalDeviceId } from "./settings.js";
+import { isFederationProbeRequest } from "./probeRequest.js";
+
+function maybeReportLenderLedger(lendCtx, usage, outcome, upstreamModel) {
+  if (isFederationProbeRequest(lendCtx)) return;
+  reportLenderLedger(lendCtx, usage, outcome, upstreamModel).catch(() => {});
+}
 
 async function wrapLendResponse(response, lendCtx, upstreamModel) {
   const contentType = response.headers.get("content-type") || "";
@@ -14,9 +22,9 @@ async function wrapLendResponse(response, lendCtx, upstreamModel) {
       const data = await clone.json();
       const usage = data?.usage;
       const model = upstreamModel || data?.model;
-      reportLenderLedger(lendCtx, usage, usage ? "success" : "failed", model).catch(() => {});
+      maybeReportLenderLedger(lendCtx, usage, usage ? "success" : "failed", model);
     } catch {
-      reportLenderLedger(lendCtx, null, "failed", upstreamModel).catch(() => {});
+      maybeReportLenderLedger(lendCtx, null, "failed", upstreamModel);
     }
     return response;
   }
@@ -46,9 +54,9 @@ async function wrapLendResponse(response, lendCtx, upstreamModel) {
           }
         }
       }
-      reportLenderLedger(lendCtx, usage, usage ? "success" : "failed", upstreamModel).catch(() => {});
+      maybeReportLenderLedger(lendCtx, usage, usage ? "success" : "failed", upstreamModel);
     } catch {
-      reportLenderLedger(lendCtx, null, "failed", upstreamModel).catch(() => {});
+      maybeReportLenderLedger(lendCtx, null, "failed", upstreamModel);
     }
   })();
 
@@ -63,13 +71,28 @@ export async function maybeHandleFederationChat(request) {
   const auth = request.headers.get("authorization") || "";
   const lendCtx = await verifyIncomingFederationToken(auth);
   if (lendCtx?.error) {
+    fedDiag("lend", "reject incoming federation token", { error: lendCtx.error });
     return new Response(JSON.stringify({ error: { message: lendCtx.error } }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
     });
   }
   if (lendCtx) {
+    if (isFederationProbeRequest(lendCtx)) {
+      fedDiag("lend", "probe request (no ledger)", {
+        requestId: lendCtx.requestId?.slice(0, 12),
+        logicalModel: lendCtx.logicalModel,
+      });
+    } else {
+      fedDiag("lend", "incoming borrow request", {
+        requestId: lendCtx.requestId?.slice(0, 12),
+        logicalModel: lendCtx.logicalModel,
+        borrower: lendCtx.borrowerDeviceId?.slice(0, 8),
+        lender: lendCtx.lenderDeviceId?.slice(0, 8),
+      });
+    }
     const upstreamModel = await resolveUpstreamModelForLogical(lendCtx.logicalModel);
+    fedDiag("lend", `upstream model=${upstreamModel}`, { logicalModel: lendCtx.logicalModel });
     let lendRequest = request;
     try {
       const body = await request.json();
@@ -93,19 +116,31 @@ export async function maybeHandleFederationChat(request) {
     const body = await request.clone().json();
     modelStr = body?.model;
   } catch {
+    fedDiag("chat", "borrow path skipped", { reason: "invalid_json_body" });
     return null;
   }
 
   const settings = await getFederationSettings();
   const logicalModel = await resolveBorrowLogicalModel(modelStr, settings);
   if (!logicalModel) return null;
+
+  const selfDeviceId = await getLocalDeviceId();
+  fedDiag("borrow", "enter executeFederationBorrow", {
+    inputModel: modelStr,
+    logicalModel,
+    selfDeviceId: selfDeviceId?.slice(0, 8),
+    hubUrl: settings.hubUrl,
+  });
+
   if (!settings.federationEnabled || !settings.hubUrl || !settings.hubAccessToken) {
+    fedDiag("borrow", "abort", { reason: "hub_not_configured" });
     return new Response(
       JSON.stringify({ error: { message: "Federation not configured on this node" } }),
       { status: 503, headers: { "Content-Type": "application/json" } }
     );
   }
   if (!settings.federationBorrowEnabled) {
+    fedDiag("borrow", "abort", { reason: "borrow_disabled" });
     return new Response(
       JSON.stringify({ error: { message: "Federation borrow disabled" } }),
       { status: 403, headers: { "Content-Type": "application/json" } }
