@@ -1,5 +1,6 @@
 import path from "node:path";
 
+export const HOST = process.env.HOST || "127.0.0.1";
 export const PORT = Number(process.env.PORT || 30200);
 export const HUB_DATA_DIR = process.env.HUB_DATA_DIR || path.join(process.cwd(), "data");
 export const DB_PATH = path.join(HUB_DATA_DIR, "hub.db");

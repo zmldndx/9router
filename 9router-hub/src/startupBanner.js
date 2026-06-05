@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  HOST,
   PORT,
   DB_PATH,
   HUB_DATA_DIR,
@@ -44,6 +45,7 @@ export function printHubStartupBanner() {
     "  9router-hub — startup diagnostics",
     LINE,
     `  .env file              ${hubEnvPath}${existsSync(hubEnvPath) ? " (present)" : " (missing, using defaults)"}`,
+    `  HOST                    ${HOST}`,
     `  PORT                    ${PORT}`,
     `  HUB_DATA_DIR            ${HUB_DATA_DIR}`,
     `  Database                ${DB_PATH}`,
@@ -65,8 +67,8 @@ export function printHubStartupBanner() {
     "  Lend probe log (daily, not federation ledger):",
     `  probe heartbeat         ${getProbeHeartbeatLogPaths().file}`,
     "",
-    `  Dashboard               http://127.0.0.1:${PORT}/`,
-    `  Health                  http://127.0.0.1:${PORT}/health`,
+    `  Dashboard               http://${HOST}:${PORT}/`,
+    `  Health                  http://${HOST}:${PORT}/health`,
     LINE,
     "",
   ];

@@ -3,7 +3,7 @@ import express from "express";
 import cors from "cors";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PORT, UI_REFRESH_MS, DB_PATH } from "./config.js";
+import { HOST, PORT, UI_REFRESH_MS, DB_PATH } from "./config.js";
 import { printHubStartupBanner } from "./startupBanner.js";
 import { getDb } from "./db/index.js";
 import { expireStalePending } from "./services/ledger.js";
@@ -66,8 +66,8 @@ setInterval(() => {
   }
 }, 3600000);
 
-app.listen(PORT, () => {
+app.listen(PORT, HOST, () => {
   printHubStartupBanner();
-  console.log(`9router-hub listening on http://127.0.0.1:${PORT}`);
-  console.log(`Dashboard UI: http://127.0.0.1:${PORT}/ (refresh ${UI_REFRESH_MS}ms)`);
+  console.log(`9router-hub listening on http://${HOST}:${PORT}`);
+  console.log(`Dashboard UI: http://${HOST}:${PORT}/ (refresh ${UI_REFRESH_MS}ms)`);
 });
