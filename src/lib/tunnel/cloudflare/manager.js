@@ -116,6 +116,62 @@ export async function enableTunnel(localPort = 20128) {
   }
 }
 
+/** Respawn cloudflared backend while keeping stable shortId / public URL. */
+export async function refreshTunnel(localPort = 20128) {
+  console.log(`[Tunnel] refresh start (port=${localPort})`);
+  const existing = loadState();
+  if (!existing?.shortId) {
+    return enableTunnel(localPort);
+  }
+
+  killCloudflared(localPort);
+  clearPid();
+  svc.cancelToken = { cancelled: false };
+  svc.activeLocalPort = localPort;
+  svc.spawnInProgress = true;
+  const token = svc.cancelToken;
+  const shortId = existing.shortId;
+
+  try {
+    const onUrlUpdate = async (url) => {
+      if (token.cancelled) return;
+      console.log(`[Tunnel] refresh url updated: ${url}`);
+      await registerTunnelUrl(shortId, url);
+      saveState({ shortId, tunnelUrl: url });
+      await updateSettings({ tunnelEnabled: true, tunnelUrl: url });
+    };
+
+    setUnexpectedExitHandler(() => {
+      console.warn("[Tunnel] cloudflared exited unexpectedly, scheduling respawn");
+      if (onUnexpectedExit) onUnexpectedExit();
+    });
+
+    const { tunnelUrl } = await spawnQuickTunnel(localPort, onUrlUpdate);
+    const publicUrl = `https://r${shortId}.abc-tunnel.us`;
+    await registerTunnelUrl(shortId, tunnelUrl);
+    saveState({ shortId, tunnelUrl });
+    await updateSettings({ tunnelEnabled: true, tunnelUrl });
+
+    await waitForHealth(publicUrl, token);
+
+    try {
+      const { syncFederationEndpointToHub } = await import("@/lib/federation/heartbeat.js");
+      await syncFederationEndpointToHub();
+    } catch (e) {
+      console.warn(`[Tunnel] federation hub sync warn: ${e.message}`);
+    }
+
+    return { success: true, tunnelUrl, shortId, publicUrl, refreshed: true };
+  } catch (e) {
+    if (!/cloudflared killed|tunnel cancelled/.test(e.message)) {
+      console.error(`[Tunnel] refresh error: ${e.message}`);
+    }
+    throw e;
+  } finally {
+    svc.spawnInProgress = false;
+  }
+}
+
 export async function disableTunnel() {
   console.log("[Tunnel] disable");
   // Abort any in-flight enable so it cannot resurrect state after we clear it

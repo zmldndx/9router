@@ -5,9 +5,50 @@ const path = require("path");
 let trayInstance = null;
 let isWinTray = false;
 
-/**
- * Get icon base64 from file — used for systray (mac/linux)
- */
+function writeTrayLog(message) {
+  if (process.env.NINEROUTER_PACKAGED !== "1") return;
+  try {
+    const os = require("os");
+    const logDir = path.join(os.homedir(), ".9router", "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(
+      path.join(logDir, "tray.log"),
+      `[${new Date().toISOString()}] ${message}\n`
+    );
+  } catch { /* ignore */ }
+}
+
+const MENU_BAR_LABEL = "9Router";
+
+function getTransparentIconBase64() {
+  // 1×1 transparent PNG — macOS menu bar shows `title` text instead of a tiny icon.
+  return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII==";
+}
+
+function getDarwinMenuBarMenu(port) {
+  return {
+    icon: getTransparentIconBase64(),
+    isTemplateIcon: false,
+    title: MENU_BAR_LABEL,
+    tooltip: `9Router — http://localhost:${port}`,
+  };
+}
+
+function notifyDarwinMenuBarHint(port) {
+  if (process.platform !== "darwin") return;
+  const os = require("os");
+  const flag = path.join(os.homedir(), ".9router", ".menubar-hint-v1");
+  if (fs.existsSync(flag)) return;
+  const msg =
+    "菜单栏右上角找「9Router」；被收起时点 Control Center 的 …，或按住 ⌘ 拖动菜单栏图标";
+  const script = `display notification ${JSON.stringify(msg)} with title "9Router 已在后台运行" subtitle "localhost:${port}"`;
+  exec(`osascript -e ${script}`, () => {});
+  try {
+    fs.mkdirSync(path.dirname(flag), { recursive: true });
+    fs.writeFileSync(flag, new Date().toISOString());
+  } catch { /* ignore */ }
+}
+
 function getIconBase64() {
   const isWin = process.platform === "win32";
   const iconFile = isWin ? "icon.ico" : "icon.png";
@@ -57,6 +98,14 @@ function initTray(options) {
  * Build menu items array shared between platforms
  */
 function buildMenuItems(port, autostartEnabled) {
+  const packaged = process.env.NINEROUTER_PACKAGED === "1";
+  if (packaged) {
+    return [
+      { title: "9Router", tooltip: `Port ${port}`, enabled: false },
+      { title: "Configure", tooltip: "Open web dashboard", enabled: true },
+      { title: "Quit", tooltip: "Stop server and exit", enabled: true },
+    ];
+  }
   return [
     { title: `9Router (Port ${port})`, tooltip: "Server is running", enabled: false },
     { title: "Open Dashboard", tooltip: "Open in browser", enabled: true },
@@ -71,6 +120,14 @@ function buildMenuItems(port, autostartEnabled) {
 
 // Menu item indexes
 const MENU_INDEX = { STATUS: 0, DASHBOARD: 1, AUTOSTART: 2, QUIT: 3 };
+
+function isPackagedTray() {
+  return process.env.NINEROUTER_PACKAGED === "1";
+}
+
+function quitMenuIndex() {
+  return isPackagedTray() ? 2 : MENU_INDEX.QUIT;
+}
 
 /**
  * Get current autostart state
@@ -89,10 +146,11 @@ function getAutostartEnabled() {
  */
 function handleClick(index, options, onAutostartToggle) {
   const { onQuit, onOpenDashboard, port } = options;
+  const packaged = isPackagedTray();
   if (index === MENU_INDEX.DASHBOARD) {
     if (onOpenDashboard) onOpenDashboard();
     else openBrowser(`http://localhost:${port}/dashboard`);
-  } else if (index === MENU_INDEX.AUTOSTART) {
+  } else if (!packaged && index === MENU_INDEX.AUTOSTART) {
     const enabled = getAutostartEnabled();
     try {
       const { enableAutoStart, disableAutoStart } = require("./autostart");
@@ -100,7 +158,7 @@ function handleClick(index, options, onAutostartToggle) {
       else enableAutoStart();
       onAutostartToggle(!enabled);
     } catch (e) {}
-  } else if (index === MENU_INDEX.QUIT) {
+  } else if (index === quitMenuIndex()) {
     console.log("\n👋 Shutting down...");
     if (onQuit) onQuit();
     killTray();
@@ -150,8 +208,14 @@ function initWindowsTray(options) {
 function resolveSystray() {
   let runtimeDir = null;
   try {
-    const { getRuntimeNodeModules } = require("../../../hooks/sqliteRuntime");
+    const { getRuntimeNodeModules, getBundledSystrayDir } = require("../../../hooks/trayRuntime");
     runtimeDir = getRuntimeNodeModules();
+    const bundled = getBundledSystrayDir();
+    if (bundled) {
+      try { return { mod: require(bundled).default, isV2: true }; } catch (e) {
+        writeTrayLog(`bundled systray2 require failed: ${e.message}`);
+      }
+    }
   } catch (e) {}
 
   // 1) systray2 in runtime dir (where ensureTrayRuntime installs it)
@@ -189,7 +253,10 @@ function initUnixTray(options) {
   const { port } = options;
   try {
     const resolved = resolveSystray();
-    if (!resolved) return null;
+    if (!resolved) {
+      writeTrayLog("resolveSystray returned null");
+      return null;
+    }
     const { mod: SysTray, isV2 } = resolved;
 
     chmodTrayBin(isV2 ? "systray2" : "systray");
@@ -197,16 +264,15 @@ function initUnixTray(options) {
     const autostartEnabled = getAutostartEnabled();
     const items = buildMenuItems(port, autostartEnabled);
 
-    const menu = {
-      icon: getIconBase64(),
-      // The bundled icon.png is a full-color RGBA logo. Don't mark it as a
-      // template icon: macOS would then render it as a solid white square
-      // because template mode only uses the alpha channel.
-      isTemplateIcon: false,
-      title: "",
-      tooltip: `9Router - Port ${port}`,
-      items
-    };
+    const menu = process.platform === "darwin"
+      ? { ...getDarwinMenuBarMenu(port), items }
+      : {
+        icon: getIconBase64(),
+        isTemplateIcon: false,
+        title: "",
+        tooltip: `9Router - Port ${port}`,
+        items,
+      };
 
     trayInstance = new SysTray({ menu, debug: false, copyDir: true });
     isWinTray = false;
@@ -226,12 +292,15 @@ function initUnixTray(options) {
     });
 
     if (isV2) {
-      // systray2 exposes a ready() promise instead of onReady/onError. Surface
-      // failures (binary crash, EACCES, etc.) so users can see why the icon
-      // didn't appear instead of getting a misleading "running in tray" log.
-      trayInstance.ready().catch((err) => {
-        process.stderr.write(`[9router] tray failed to start: ${err && err.message ? err.message : err}\n`);
-      });
+      trayInstance.ready()
+        .then(() => {
+          notifyDarwinMenuBarHint(port);
+        })
+        .catch((err) => {
+          const msg = err && err.message ? err.message : String(err);
+          process.stderr.write(`[9router] tray failed to start: ${msg}\n`);
+          writeTrayLog(`tray ready() failed: ${msg}`);
+        });
     } else {
       trayInstance.onReady(() => {});
       trayInstance.onError(() => {});
@@ -239,6 +308,7 @@ function initUnixTray(options) {
 
     return trayInstance;
   } catch (err) {
+    writeTrayLog(`tray init error: ${err.message}`);
     process.stderr.write(`[9router] tray init error: ${err.message}\n`);
     return null;
   }

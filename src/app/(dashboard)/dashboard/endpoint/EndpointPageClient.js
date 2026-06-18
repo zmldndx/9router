@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { SHOW_TAILSCALE_UI } from "@/shared/config/uiFlags";
 
 const TUNNEL_BENEFITS = [
   { icon: "public", title: "Access Anywhere", desc: "Use your API from any network" },
@@ -138,10 +139,10 @@ export default function APIPageClient({ machineId }) {
   // Status poll: only while degraded (not yet reachable). Stop once healthy to avoid spam.
   // Visibility re-check: refresh once when tab becomes visible.
   useEffect(() => {
-    const anyEnabled = tunnelEnabled || tsEnabled;
+    const anyEnabled = tunnelEnabled || (SHOW_TAILSCALE_UI && tsEnabled);
     if (!anyEnabled) return;
     const tunnelHealthy = !tunnelEnabled || tunnelReachable;
-    const tsHealthy = !tsEnabled || tsReachable;
+    const tsHealthy = !SHOW_TAILSCALE_UI || !tsEnabled || tsReachable;
     const allHealthy = tunnelHealthy && tsHealthy;
     const onVisible = () => { if (!document.hidden) syncTunnelStatus(); };
     document.addEventListener("visibilitychange", onVisible);
@@ -167,7 +168,7 @@ export default function APIPageClient({ machineId }) {
       } else {
         tunnelClientReachableRef.current = false;
       }
-      if (tsEnabled && tsUrl) {
+      if (SHOW_TAILSCALE_UI && tsEnabled && tsUrl) {
         const ok = await clientPingUrl(tsUrl);
         tsClientReachableRef.current = ok;
         if (ok) { tsMissRef.current = 0; setTsReachable(true); if (!tsEverReachableRef.current) { tsEverReachableRef.current = true; setTsEverReachable(true); } }
@@ -176,11 +177,11 @@ export default function APIPageClient({ machineId }) {
         tsClientReachableRef.current = false;
       }
     };
-    const anyEnabled = (tunnelEnabled && (tunnelUrl || tunnelPublicUrl)) || (tsEnabled && tsUrl);
+    const anyEnabled = (tunnelEnabled && (tunnelUrl || tunnelPublicUrl)) || (SHOW_TAILSCALE_UI && tsEnabled && tsUrl);
     if (!anyEnabled) return;
     probeBoth();
     const tunnelHealthy = !tunnelEnabled || tunnelReachable;
-    const tsHealthy = !tsEnabled || tsReachable;
+    const tsHealthy = !SHOW_TAILSCALE_UI || !tsEnabled || tsReachable;
     if (tunnelHealthy && tsHealthy) return;
     const id = setInterval(probeBoth, CLIENT_PING_FAST_MS);
     return () => clearInterval(id);
@@ -451,6 +452,30 @@ export default function APIPageClient({ machineId }) {
       setTunnelStatus({ type: "error", message: error.message });
     } finally {
       setTunnelLoading(false);
+    }
+  };
+
+  const handleRefreshTunnel = async () => {
+    setTunnelLoading(true);
+    setTunnelStatus(null);
+    setTunnelProgress("Refreshing tunnel backend...");
+    try {
+      const res = await fetch("/api/tunnel/refresh", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setTunnelStatus({ type: "error", message: data.error || "Failed to refresh tunnel" });
+        return;
+      }
+      setTunnelUrl(data.tunnelUrl || tunnelUrl);
+      setTunnelPublicUrl(data.publicUrl || tunnelPublicUrl);
+      setTunnelEnabled(true);
+      await pingTunnelHealth(data.publicUrl, data.tunnelUrl);
+      setTunnelStatus({ type: "success", message: "Tunnel backend refreshed. Public URL unchanged." });
+    } catch (error) {
+      setTunnelStatus({ type: "error", message: error.message });
+    } finally {
+      setTunnelLoading(false);
+      setTunnelProgress("");
     }
   };
 
@@ -806,6 +831,13 @@ export default function APIPageClient({ machineId }) {
                   <span className="material-symbols-outlined text-[18px]">{copied === "tunnel_url" ? "check" : "content_copy"}</span>
                 </button>
                 <button
+                  onClick={handleRefreshTunnel}
+                  className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-colors shrink-0"
+                  title="Refresh tunnel backend (keeps public URL)"
+                >
+                  <span className="material-symbols-outlined text-[18px]">sync</span>
+                </button>
+                <button
                   onClick={() => setShowDisableTunnelModal(true)}
                   className="p-2 hover:bg-red-500/10 rounded text-red-500 transition-colors shrink-0"
                   title="Disable Tunnel"
@@ -883,6 +915,13 @@ export default function APIPageClient({ machineId }) {
               </Button>
             )}
           </div>
+          {tunnelEnabled && tunnelPublicUrl ? (
+            <p className="text-xs text-text-muted mt-1 ml-[96px]">
+              联邦公网地址固定为 <span className="font-mono">{tunnelPublicUrl}</span>；底层 cloudflared 重连时会自动更新，也可手动点刷新。
+            </p>
+          ) : null}
+          {SHOW_TAILSCALE_UI ? (
+          <>
           {/* Tailscale */}
           <div className="flex items-center gap-2">
             <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 min-w-[88px] text-center ${
@@ -967,10 +1006,12 @@ export default function APIPageClient({ machineId }) {
               </Button>
             )}
           </div>
+          </>
+          ) : null}
         </div>
 
         {/* Pre-enable security gate banner */}
-        {isLoginUnsafe && !tunnelEnabled && !tsEnabled && (
+        {isLoginUnsafe && !tunnelEnabled && !(SHOW_TAILSCALE_UI && tsEnabled) && (
           <div className="mt-4">
             <SecurityWarning
               message={unsafeReason}
@@ -979,8 +1020,8 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
 
-        {/* Security warnings when tunnel or tailscale is active */}
-        {(tunnelEnabled || tsEnabled) && (
+        {/* Security warnings when tunnel is active */}
+        {(tunnelEnabled || (SHOW_TAILSCALE_UI && tsEnabled)) && (
           <div className="mt-4 flex flex-col gap-2">
             {!requireApiKey && (
               <SecurityWarning
@@ -1005,7 +1046,7 @@ export default function APIPageClient({ machineId }) {
         )}
 
         {/* Tunnel dashboard access option */}
-        {(tunnelEnabled || tsEnabled) && (
+        {(tunnelEnabled || (SHOW_TAILSCALE_UI && tsEnabled)) && (
           <div className="mt-4 pt-4 border-t border-border flex items-center gap-3">
             <Toggle
               checked={tunnelDashboardAccess}
@@ -1013,7 +1054,7 @@ export default function APIPageClient({ machineId }) {
             />
             <div className="flex items-center gap-1.5">
               <p className="font-medium text-sm">Allow dashboard access via tunnel</p>
-              <Tooltip text="When enabled, the dashboard can be accessed through your tunnel or Tailscale URL (login still required). When disabled, dashboard access via tunnel/Tailscale is completely blocked." />
+              <Tooltip text="When enabled, the dashboard can be accessed through your tunnel URL (login still required). When disabled, dashboard access via tunnel is completely blocked." />
             </div>
           </div>
         )}
@@ -1330,7 +1371,9 @@ export default function APIPageClient({ machineId }) {
         </div>
       </Modal>
 
-      {/* Tailscale Modal */}
+      {/* Tailscale Modal — hidden when SHOW_TAILSCALE_UI is false */}
+      {SHOW_TAILSCALE_UI ? (
+      <>
       <Modal
         isOpen={showTsModal}
         title="Tailscale Funnel"
@@ -1414,6 +1457,8 @@ export default function APIPageClient({ machineId }) {
           </div>
         </div>
       </Modal>
+      </>
+      ) : null}
 
       {/* Confirm Modal */}
       <ConfirmModal

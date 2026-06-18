@@ -192,7 +192,7 @@ export default function FederationPageClient() {
               {saving ? "连接中…" : "注册 / 登录并连接 Hub"}
             </Button>
             <p className="text-xs text-text-muted">
-              首次注册赠送 welcome credit（以 Hub 配置为准）。借出需先在「端点」页开启 Tunnel 并填写公网 URL。
+              首次注册赠送 welcome credit（以 Hub 配置为准）。连接 Hub 时会自动开启 Tunnel，公网地址固定不变（用于联邦通信）。
             </p>
           </div>
         ) : (
@@ -208,6 +208,21 @@ export default function FederationPageClient() {
               <span>Hub: <span className="text-text-main font-mono text-xs">{status.hubUrl}</span></span>
               <span>deviceId: <span className="text-text-main font-mono text-xs">{status.deviceId}</span></span>
             </div>
+            {status.tunnelPublicUrl || status.endpointUrl ? (
+              <div className="rounded-lg border border-border-subtle bg-surface-2/50 px-3 py-2 text-sm">
+                <p className="text-text-muted text-xs mb-1">联邦公网 Endpoint（固定）</p>
+                <p className="font-mono text-xs text-text-main break-all">
+                  {status.tunnelPublicUrl || status.endpointUrl}
+                </p>
+                <p className="text-xs text-text-muted mt-1">
+                  底层 cloudflared 重连时会自动更新映射；公网短链地址不变。可在「端点」页手动刷新 Tunnel 后端。
+                </p>
+              </div>
+            ) : hubOn ? (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                正在准备 Tunnel… 若长时间无地址，请检查网络或在「端点」页手动开启。
+              </p>
+            ) : null}
             <div className="grid sm:grid-cols-2 gap-4 pt-2 border-t border-border-subtle">
               <Toggle
                 label="允许借入"

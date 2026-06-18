@@ -1,7 +1,6 @@
 import {
   getFederationSettings,
   getLocalDeviceId,
-  resolvePublicEndpointUrl,
   updateFederationSettings,
 } from "./settings.js";
 import { saveHubCredentials } from "./credentials.js";
@@ -117,7 +116,8 @@ export async function connectToHub({
   }
 
   const settings = await getFederationSettings();
-  const endpointUrl = await resolvePublicEndpointUrl();
+  const { ensureFederationTunnel } = await import("./ensureTunnel.js");
+  const { endpointUrl } = await ensureFederationTunnel();
   const registered = await registerDeviceOnHub(settings, {
     deviceId,
     deviceLabel,

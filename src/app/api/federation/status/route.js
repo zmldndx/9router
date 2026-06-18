@@ -3,10 +3,12 @@ import { hubFetch } from "@/lib/federation/hubClient";
 import {
   getFederationSettings,
   getLocalDeviceId,
+  resolvePublicEndpointUrl,
 } from "@/lib/federation/settings";
+import { getTunnelStatus } from "@/lib/tunnel";
 import { flushLedgerQueue, getLedgerAuditLogPaths } from "@/lib/federation/ledgerReporter";
 
-function basePayload(settings, deviceId) {
+function basePayload(settings, deviceId, tunnelMeta = {}) {
   return {
     federationEnabled: settings.federationEnabled,
     hubUrl: settings.hubUrl,
@@ -15,7 +17,22 @@ function basePayload(settings, deviceId) {
     federationBorrowEnabled: settings.federationBorrowEnabled,
     federationLendEnabled: settings.federationLendEnabled,
     federationExposeModels: settings.federationExposeModels,
+    endpointUrl: tunnelMeta.endpointUrl || "",
+    tunnelPublicUrl: tunnelMeta.tunnelPublicUrl || "",
+    tunnelEnabled: !!tunnelMeta.tunnelEnabled,
     generatedAt: new Date().toISOString(),
+  };
+}
+
+async function loadTunnelMeta() {
+  const [endpointUrl, tunnelStatus] = await Promise.all([
+    resolvePublicEndpointUrl(),
+    getTunnelStatus(),
+  ]);
+  return {
+    endpointUrl: endpointUrl || "",
+    tunnelPublicUrl: tunnelStatus.publicUrl || "",
+    tunnelEnabled: tunnelStatus.settingsEnabled,
   };
 }
 
@@ -23,10 +40,11 @@ export async function GET() {
   try {
     const settings = await getFederationSettings();
     const deviceId = await getLocalDeviceId();
+    const tunnelMeta = await loadTunnelMeta();
 
     if (!settings.hubAccessToken) {
       return NextResponse.json({
-        ...basePayload(settings, deviceId),
+        ...basePayload(settings, deviceId, tunnelMeta),
         hubConnected: false,
         federationEnabled: false,
         message: "Not joined — configure Hub below",
@@ -37,7 +55,7 @@ export async function GET() {
     const summary = await hubFetch("/v1/me/summary");
 
     return NextResponse.json({
-      ...basePayload(settings, deviceId),
+      ...basePayload(settings, deviceId, tunnelMeta),
       hubConnected: true,
       message: settings.federationEnabled
         ? undefined

@@ -1,6 +1,28 @@
-const esbuild = require("esbuild");
 const fs = require("fs");
 const path = require("path");
+
+function loadEsbuild() {
+  const cliDir = path.resolve(__dirname, "..");
+  const appDir = path.resolve(cliDir, "..");
+  const rootDir = path.resolve(appDir, "..");
+  const candidates = [
+    path.join(cliDir, "node_modules", "esbuild"),
+    path.join(appDir, "node_modules", "esbuild"),
+    path.join(rootDir, "node_modules", "esbuild"),
+  ];
+  for (const dir of candidates) {
+    try {
+      return require(dir);
+    } catch {
+      /* try next */
+    }
+  }
+  throw new Error(
+    "esbuild not found. Run: cd cli && npm install"
+  );
+}
+
+const esbuild = loadEsbuild();
 
 // ── Build config ─────────────────────────────────────────
 const BUILD_CONFIG = {

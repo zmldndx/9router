@@ -42,19 +42,36 @@ function cleanupLegacySystray({ silent = false } = {}) {
   }
 }
 
-// systray2's npm tarball sometimes ships the bundled Go binary without the
-// executable bit set on macOS, causing spawn() to fail with EACCES. Set +x
-// best-effort so the tray actually starts.
-function chmodSystrayBin({ silent = false } = {}) {
-  if (process.platform === "win32") return;
+function getBundledSystrayDir() {
+  if (process.env.NINEROUTER_PACKAGED !== "1") return null;
+  const cliRoot = path.join(__dirname, "..");
+  const candidates = [
+    path.join(cliRoot, "runtime", "node_modules", SYSTRAY_PKG),
+    path.join(cliRoot, "node_modules", SYSTRAY_PKG),
+  ];
+  return candidates.find((p) => fs.existsSync(path.join(p, "package.json"))) || null;
+}
+
+function chmodSystrayBinAt(baseDir, { silent = false } = {}) {
+  if (process.platform === "win32" || !baseDir) return;
   const binName = process.platform === "darwin" ? "tray_darwin_release" : "tray_linux_release";
-  const binPath = path.join(getRuntimeNodeModules(), SYSTRAY_PKG, "traybin", binName);
+  const binPath = path.join(baseDir, SYSTRAY_PKG, "traybin", binName);
   if (!fs.existsSync(binPath)) return;
   try {
     fs.chmodSync(binPath, 0o755);
+    if (process.platform === "darwin") {
+      const { execSync } = require("child_process");
+      try { execSync(`xattr -cr "${binPath}"`, { stdio: "ignore" }); } catch { /* ignore */ }
+    }
   } catch (e) {
     if (!silent) console.warn(`[9router][runtime] chmod tray bin failed: ${e.message}`);
   }
+}
+
+function chmodSystrayBin({ silent = false } = {}) {
+  chmodSystrayBinAt(getRuntimeNodeModules(), { silent });
+  const bundled = getBundledSystrayDir();
+  if (bundled) chmodSystrayBinAt(path.dirname(bundled), { silent });
 }
 
 function ensureRuntimeDir() {
@@ -94,14 +111,28 @@ function ensureTrayRuntime({ silent = false } = {}) {
   if (process.platform === "win32") {
     return { systray: false, skipped: true };
   }
+
+  const bundled = getBundledSystrayDir();
+  if (bundled) {
+    chmodSystrayBin({ silent });
+    if (!silent) console.log("✅ System tray ready (bundled)");
+    return { systray: true, bundled: true };
+  }
+
   if (hasSystray()) {
     chmodSystrayBin({ silent });
     if (!silent) console.log("✅ System tray ready");
     return { systray: true };
   }
+
+  // Packaged .app may launch without npm on PATH — surface a clear hint.
+  if (process.env.NINEROUTER_PACKAGED === "1" && !silent) {
+    console.warn("⚠️  System tray unavailable — bundled systray2 missing from app bundle");
+  }
+
   const ok = npmInstall([`${SYSTRAY_PKG}@${SYSTRAY_VERSION}`], { silent });
   if (ok) chmodSystrayBin({ silent });
   return { systray: ok && hasSystray() };
 }
 
-module.exports = { ensureTrayRuntime };
+module.exports = { ensureTrayRuntime, getBundledSystrayDir };

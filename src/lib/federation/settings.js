@@ -50,11 +50,9 @@ export function parseFederationModel(modelStr) {
   return logicalModel || null;
 }
 
+/** Stable federation/public endpoint — always prefer tunnel shortId URL over ephemeral trycloudflare.com */
 export async function resolvePublicEndpointUrl() {
   const s = await getSettings();
-  if (s.tailscaleEnabled && s.tailscaleUrl?.trim()) {
-    return s.tailscaleUrl.trim().replace(/\/$/, "");
-  }
   if (s.tunnelEnabled) {
     try {
       const { loadState } = await import("@/lib/tunnel/shared/state.js");
@@ -69,5 +67,9 @@ export async function resolvePublicEndpointUrl() {
       return s.tunnelUrl.trim().replace(/\/$/, "");
     }
   }
-  return (s.tailscaleUrl || s.tunnelUrl || "").trim().replace(/\/$/, "");
+  // Legacy tailscale settings may still exist in DB; only used when tunnel is off.
+  if (s.tailscaleEnabled && s.tailscaleUrl?.trim()) {
+    return s.tailscaleUrl.trim().replace(/\/$/, "");
+  }
+  return (s.tunnelUrl || s.tailscaleUrl || "").trim().replace(/\/$/, "");
 }

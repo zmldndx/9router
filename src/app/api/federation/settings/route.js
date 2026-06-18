@@ -89,6 +89,16 @@ export async function PATCH(request) {
       );
     }
 
+    const federationNeedsTunnel =
+      (body.federationEnabled === true && !prev.federationEnabled) ||
+      (body.federationLendEnabled === true && !prev.federationLendEnabled) ||
+      (settings.federationEnabled && body.federationLendEnabled === true);
+
+    if (federationNeedsTunnel && settings.federationEnabled && settings.hubAccessToken) {
+      const { ensureFederationTunnel } = await import("@/lib/federation/ensureTunnel.js");
+      await ensureFederationTunnel();
+    }
+
     return NextResponse.json({ ok: true, settings: await getFederationSettings(), deviceId });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: e.status || 500 });

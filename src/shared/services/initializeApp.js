@@ -103,9 +103,12 @@ export async function initializeApp() {
 
 async function startFederationIfEnabled() {
   const { getFederationSettings } = await import("@/lib/federation/settings.js");
-  const { startFederationHeartbeat } = await import("@/lib/federation/heartbeat.js");
   const fed = await getFederationSettings();
   if (fed.federationEnabled && fed.hubUrl && fed.hubAccessToken) {
+    const { ensureFederationTunnel } = await import("@/lib/federation/ensureTunnel.js");
+    await ensureFederationTunnel().catch((e) => {
+      console.warn(`[Federation] startup tunnel ensure failed: ${e.message}`);
+    });
     const { startFederationHeartbeat, syncFederationEndpointToHub } = await import(
       "@/lib/federation/heartbeat.js"
     );

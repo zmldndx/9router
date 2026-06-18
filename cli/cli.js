@@ -53,7 +53,7 @@ const args = process.argv.slice(2);
 try { ensureSqliteRuntime({ silent: true }); } catch {}
 
 // Self-heal tray runtime (systray for macOS/Linux only). Windows skipped.
-try { ensureTrayRuntime({ silent: true }); } catch {}
+try { ensureTrayRuntime({ silent: process.env.NINEROUTER_PACKAGED !== "1" }); } catch {}
 
 // Configuration constants
 const APP_NAME = pkg.name; // Use from package.json
@@ -634,8 +634,9 @@ function startServer(latestVersion) {
   // Initialize tray icon (runs alongside TUI)
   const initTrayIcon = () => {
     try {
+      try { ensureTrayRuntime({ silent: false }); } catch { /* best effort */ }
       const { initTray } = require("./src/cli/tray/tray");
-      initTray({
+      const tray = initTray({
         port,
         onQuit: () => {
           isShuttingDown = true;
@@ -645,8 +646,15 @@ function startServer(latestVersion) {
         },
         onOpenDashboard: () => openBrowser(url)
       });
+      if (!tray && process.env.NINEROUTER_PACKAGED === "1") {
+        console.warn("⚠️  Menu bar icon unavailable — see ~/.9router/logs/tray.log");
+        openBrowser(url);
+      }
     } catch (err) {
-      // Tray not available - continue without it
+      if (process.env.NINEROUTER_PACKAGED === "1") {
+        console.warn(`⚠️  Tray init failed: ${err.message}`);
+        openBrowser(url);
+      }
     }
   };
 
@@ -661,8 +669,7 @@ function startServer(latestVersion) {
 
     setTimeout(() => {
       initTrayIcon();
-      console.log("\n💡 Router is now running in system tray. Close this terminal if you want.");
-      console.log("   Right-click tray icon to open dashboard or quit.\n");
+      console.log("\n💡 菜单栏右上角找「9Router」文字，点击 Configure 打开控制台。\n");
     }, 2000);
 
     return;

@@ -2,6 +2,7 @@
 export {
   enableTunnel,
   disableTunnel,
+  refreshTunnel,
   getTunnelStatus,
   isTunnelManuallyDisabled,
   isTunnelReconnecting,

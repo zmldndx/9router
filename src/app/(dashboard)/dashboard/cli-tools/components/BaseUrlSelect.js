@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
+import { SHOW_TAILSCALE_UI } from "@/shared/config/uiFlags";
 
 const STORAGE_KEY = "9router.cliToolEndpointPresets";
 const CUSTOM_VALUE = "__custom__";
@@ -40,7 +41,7 @@ const buildOptions = ({ requiresExternalUrl, tunnelEnabled, tunnelPublicUrl, tai
     const u = wrap(tunnelPublicUrl);
     opts.push({ value: "tunnel", label: u, url: u });
   }
-  if (tailscaleEnabled && tailscaleUrl) {
+  if (SHOW_TAILSCALE_UI && tailscaleEnabled && tailscaleUrl) {
     const u = wrap(tailscaleUrl);
     opts.push({ value: "tailscale", label: u, url: u });
   }

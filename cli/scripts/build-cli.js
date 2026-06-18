@@ -134,15 +134,25 @@ console.log("✅ Cleaned\n");
 // Newer Next.js standalone output writes server.js/package.json plus .next/, src/, and
 // node_modules/ directly under .next/standalone. Older builds may still use a nested app/.
 console.log("3️⃣  Copying Next.js standalone build to app/cli/app...");
+function findStandaloneApp(root) {
+  if (!fs.existsSync(root)) return null;
+  if (fs.existsSync(path.join(root, "server.js"))) return root;
+  const legacyNested = path.join(root, "app");
+  if (fs.existsSync(path.join(legacyNested, "server.js"))) return legacyNested;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(root, entry.name);
+    if (fs.existsSync(path.join(candidate, "server.js"))) return candidate;
+  }
+  return null;
+}
 const standaloneRoot = path.join(appDir, ".next", "standalone");
 const standaloneRootResolved = path.join(buildDistDir, "standalone");
 const standaloneRootToUse = fs.existsSync(standaloneRootResolved) ? standaloneRootResolved : standaloneRoot;
-const standaloneApp = fs.existsSync(path.join(standaloneRootToUse, "server.js"))
-  ? standaloneRootToUse
-  : path.join(standaloneRootToUse, "app");
-if (!fs.existsSync(standaloneApp)) {
+const standaloneApp = findStandaloneApp(standaloneRootToUse);
+if (!standaloneApp) {
   console.error("❌ Next.js standalone build not found under .next/standalone");
-  console.error("Expected either .next/standalone/server.js or .next/standalone/app/");
+  console.error("Expected server.js under standalone root, app/, or workspace package subdir");
   process.exit(1);
 }
 copyRecursive(standaloneApp, cliAppDir);
@@ -245,7 +255,17 @@ if (fs.existsSync(updaterSrc)) {
 
 // Step 8: Build MITM server (config driven - see app/cli/scripts/buildMitm.js)
 console.log("8️⃣  Building MITM server...");
+function ensureCliDevDeps() {
+  const esbuildPath = path.join(cliDir, "node_modules", "esbuild");
+  if (fs.existsSync(esbuildPath)) return;
+  console.log("📦 Installing esbuild for MITM bundle...");
+  execSync("npm install esbuild@^0.25.12 --no-audit --no-fund --prefer-offline --no-save", {
+    stdio: "inherit",
+    cwd: cliDir,
+  });
+}
 try {
+  ensureCliDevDeps();
   execSync("node scripts/buildMitm.js", { stdio: "inherit", cwd: cliDir });
   console.log("✅ MITM server build completed\n");
 } catch (error) {

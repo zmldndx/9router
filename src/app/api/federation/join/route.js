@@ -24,6 +24,7 @@ export async function POST(request) {
       creditUSD: result.auth.creditUSD,
       deviceId: result.deviceId,
       device: result.device,
+      endpointUrl: result.endpointUrl,
     });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: e.status || 500 });
